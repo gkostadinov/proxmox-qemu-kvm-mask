@@ -1,0 +1,47 @@
+{
+  "id": "pve9-intel-7.0.14-22",
+  "status": "experimental",
+  "match": {
+    "architecture": "amd64",
+    "cpu_vendor": "GenuineIntel",
+    "kernel": "7.0.14-22-pve",
+    "qemu_base_versions": [
+      "11.0.3-4",
+      "11.1.1-2"
+    ],
+    "ovmf_version": "4.2026.08-1",
+    "pve_manager_version": "9.2.21",
+    "qemu_server_version": "9.2.10"
+  },
+  "qemu": {
+    "url": "https://git.proxmox.com/git/pve-qemu.git",
+    "commit": "cb85b70c40df8eb7fbad2ed9ce707f8767c3e41e",
+    "submodule": "qemu",
+    "upstream_commit": "c3d48b7d1e89604920e5b81b91140c2ad39a1943",
+    "version": "11.1.1-2+vmp1",
+    "build_dir": "pve-qemu-kvm-11.1.1",
+    "base_patch_url": "https://github.com/AICodo/pve-emu-realpc/releases/download/v20261004-104985-pve9-x64/qemu-autoGenPatch.patch",
+    "base_patch_sha256": "4f461886b57e31e0f714f138cf75f4de90d88be8328a89a92c70a3b785179fc1",
+    "patches": [
+      "qemu-board.patch",
+      "qemu-routing.patch"
+    ],
+    "splash_sha256": "bca8a2ab956a1f5ed96f97258e525463bbc00e81d0b862e338d4c689050ca59c"
+  },
+  "kernel": {
+    "url": "https://git.proxmox.com/git/pve-kernel.git",
+    "commit": "73f65ca4688660057439d2270e5afdfa58ee6d3d",
+    "submodule": "submodules/ubuntu-kernel",
+    "upstream_commit": "874594fa24531e1ea15fa72709d20047e4a8d77c",
+    "patch": "kvm-hypercall.patch",
+    "selected_proxmox_patch_count": 37
+  },
+  "firmware": {
+    "url": "https://git.proxmox.com/git/pve-edk2-firmware.git",
+    "commit": "f37039e52d228a7844a90aa2aaf1e161ebd04fcd",
+    "submodule": "edk2",
+    "upstream_commit": "2970e5699ba6267f3384ffab20f96647578aebc8",
+    "target": "OvmfPkg/OvmfPkgIa32X64.dsc",
+    "code_size": 3653632
+  }
+}

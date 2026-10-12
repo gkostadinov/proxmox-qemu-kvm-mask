@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proxmox-qemu-kvm-mask"
+version = "0.1.0"
+description = "Version-matched QEMU/KVM/OVMF marker masking for Proxmox"
+requires-python = ">=3.11"
+license = {text = "GPL-2.0-only"}
+dependencies = []
+
+[project.scripts]
+qemu-mask = "vmpkit.cli:main"
+
+[tool.setuptools]
+packages = ["vmpkit"]
+include-package-data = true
+
+[tool.setuptools.data-files]
+"share/vmpkit" = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+"share/vmpkit/recipes" = ["recipes/*.json"]
+"share/vmpkit/patches" = ["patches/*.patch"]
+"share/vmpkit/assets" = ["assets/*.jpg"]

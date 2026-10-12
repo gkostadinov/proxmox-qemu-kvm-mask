@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "architecture": "amd64",
+  "kernel": "7.0.14-22-pve",
+  "cpu_vendor": "GenuineIntel",
+  "cpu_model": "Intel(R) Example CPU",
+  "vmx": true,
+  "packages": {
+    "pve-manager": "9.2.21",
+    "qemu-server": "9.2.10",
+    "pve-qemu-kvm": "11.1.1-2",
+    "pve-edk2-firmware-ovmf": "4.2026.08-1"
+  },
+  "dmi": {
+    "bios_vendor": "Example Firmware",
+    "bios_version": "1.0",
+    "bios_date": "01/01/2026",
+    "board_vendor": "Example Vendor",
+    "board_name": "Example Board",
+    "board_version": "1.0",
+    "sys_vendor": "Example Vendor"
+  },
+  "secure_boot": "SecureBoot enabled",
+  "headers_present": true,
+  "package_held": false,
+  "kvm_parameter_present": false,
+  "kvm_path": "/lib/modules/7.0.14-22-pve/kernel/arch/x86/kvm/kvm.ko",
+  "running_containers": [],
+  "guests": {
+    "200": {
+      "status": "running",
+      "qemu_cpu": "host,hv-relaxed,hv-vapic",
+      "has_xhci": true,
+      "config": {
+        "name": "example",
+        "machine": "pc-q35-10.1",
+        "bios": "ovmf",
+        "ostype": "win11",
+        "cpu": "host",
+        "cores": "4",
+        "memory": "8192",
+        "efidisk0": "local-lvm:example-efi,efitype=4m,size=4M",
+        "sata0": "local-lvm:example-system,size=128G",
+        "smbios1": "uuid=11111111-2222-4333-8444-555555555555",
+        "args": "-machine vmport=off -smbios type=0,vendor=OldFirmware",
+        "usb0": "host=1-2",
+        "vga": "std",
+        "onboot": "0"
+      }
+    },
+    "201": {
+      "status": "stopped",
+      "config": {
+        "name": "another-example"
+      }
+    }
+  }
+}

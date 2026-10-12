@@ -1,0 +1,19 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -v
+      - run: python -m compileall -q vmpkit
+      - run: ./setup.sh plan --snapshot examples/inventory.synthetic.json --vmid 200 > /tmp/example-plan.json
+      - run: python -m pip wheel --no-deps . -w /tmp/wheels

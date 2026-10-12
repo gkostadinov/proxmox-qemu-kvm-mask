@@ -1,0 +1,49 @@
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -149,6 +149,12 @@
+ #include <asm/kvm-x86-ops.h>
+ EXPORT_STATIC_CALL_GPL(kvm_x86_get_cs_db_l_bits);
+ EXPORT_STATIC_CALL_GPL(kvm_x86_cache_reg);
++
++/* Opt-in: match bare CPU hypercall behavior for unadvertised guests. */
++static bool __read_mostly hidden_guest_ud;
++module_param(hidden_guest_ud, bool, 0644);
++MODULE_PARM_DESC(hidden_guest_ud,
++                "Inject #UD for hypercalls when guest CPUID hides the hypervisor");
+ 
+ static bool __read_mostly ignore_msrs = 0;
+ module_param(ignore_msrs, bool, 0644);
+@@ -10528,8 +10534,23 @@
+ }
+ EXPORT_SYMBOL_FOR_KVM_INTERNAL(____kvm_emulate_hypercall);
+ 
++static bool kvm_hidden_guest_ud(struct kvm_vcpu *vcpu)
++{
++	struct kvm_cpuid_entry2 *leaf1;
++
++	if (!hidden_guest_ud)
++		return false;
++	leaf1 = kvm_find_cpuid_entry(vcpu, 1);
++	return !leaf1 || !(leaf1->ecx & BIT(31));
++}
++
+ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+ {
++	if (kvm_hidden_guest_ud(vcpu)) {
++		kvm_queue_exception(vcpu, UD_VECTOR);
++		return 1;
++	}
++
+ 	if (kvm_xen_hypercall_enabled(vcpu->kvm))
+ 		return kvm_xen_hypercall(vcpu);
+ 
+@@ -10551,7 +10572,8 @@
+ 	 * If the quirk is disabled, synthesize a #UD and let the guest pick up
+ 	 * the pieces.
+ 	 */
+-	if (!kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_FIX_HYPERCALL_INSN)) {
++	if (kvm_hidden_guest_ud(vcpu) ||
++	    !kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_FIX_HYPERCALL_INSN)) {
+ 		ctxt->exception.error_code_valid = false;
+ 		ctxt->exception.vector = UD_VECTOR;
+ 		ctxt->have_exception = true;

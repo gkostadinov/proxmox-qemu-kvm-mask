@@ -1,0 +1,48 @@
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -203,8 +203,27 @@
+ {
+     int len;
+ 
++    char board_seg[ACPI_NAMESEG_LEN + 1];
++
+     len = strlen(seg);
+     assert(len <= ACPI_NAMESEG_LEN);
++
++    if (MACHINE(qdev_get_machine())->board_identity && len == 4) {
++        if (!strcmp(seg, "PRTP")) {
++            seg = "RTPI";
++        } else if (!strcmp(seg, "PRTA")) {
++            seg = "RTAI";
++        } else if ((!strncmp(seg, "LNK", 3) ||
++                    !strncmp(seg, "GSI", 3)) &&
++                   seg[3] >= 'A' && seg[3] <= 'H') {
++            memcpy(board_seg, seg, 4);
++            board_seg[2] = '0';
++            board_seg[4] = 0;
++            seg = board_seg;
++        } else if (!strcmp(seg, "D0FA")) {
++            seg = "SAT0";
++        }
++    }
+ 
+     g_array_append_vals(array, seg, len);
+     /* Pad up to ACPI_NAMESEG_LEN characters if necessary. */
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -2337,6 +2337,15 @@
+             pci_set_word(config + PCI_VENDOR_ID, 0x8086);
+             pci_set_word(config + PCI_DEVICE_ID, 0x244e);
+         }
++        uint8_t ssvid = pci_find_capability(pci_dev, PCI_CAP_ID_SSVID);
++        if (ssvid &&
++            (pci_get_word(config + ssvid + PCI_SSVID_VENDOR_ID) == 0x1b36 ||
++             pci_get_word(config + ssvid + PCI_SSVID_VENDOR_ID) == 0x1af4)) {
++            pci_set_word(config + ssvid + PCI_SSVID_VENDOR_ID,
++                         pci_get_word(config + PCI_VENDOR_ID));
++            pci_set_word(config + ssvid + PCI_SSVID_DEVICE_ID,
++                         pci_get_word(config + PCI_DEVICE_ID));
++        }
+         if (header == PCI_HEADER_TYPE_NORMAL &&
+             pci_get_word(config + PCI_SUBSYSTEM_VENDOR_ID) == 0x1af4) {
+             pci_set_word(config + PCI_SUBSYSTEM_VENDOR_ID,
