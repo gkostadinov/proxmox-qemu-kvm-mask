@@ -1,0 +1,75 @@
+--- a/hw/usb/host-libusb.c
++++ b/hw/usb/host-libusb.c
+@@ -499,21 +499,22 @@
+ 
+ static void usb_host_req_abort(USBHostRequest *r)
+ {
+-    USBHostDevice  *s = r->host;
+-    bool inflight = (r->p && r->p->state == USB_PACKET_ASYNC);
+-
+-    if (inflight) {
+-        r->p->status = USB_RET_NODEV;
+-        trace_usb_host_req_complete(s->bus_num, s->addr, r->p,
+-                                    r->p->status, r->p->actual_length);
+-        if (r->p->ep->nr == 0) {
+-            usb_generic_async_ctrl_complete(USB_DEVICE(s), r->p);
++    USBHostDevice *s = r->host;
++    USBPacket *p = r->p;
++
++    if (p && p->state == USB_PACKET_ASYNC) {
++        /* Completion can cancel other packets or re-enter device teardown. */
++        r->p = NULL;
++        libusb_cancel_transfer(r->xfer);
++
++        p->status = USB_RET_NODEV;
++        trace_usb_host_req_complete(s->bus_num, s->addr, p,
++                                    p->status, p->actual_length);
++        if (p->ep->nr == 0) {
++            usb_generic_async_ctrl_complete(USB_DEVICE(s), p);
+         } else {
+-            usb_packet_complete(USB_DEVICE(s), r->p);
+-        }
+-        r->p = NULL;
+-
+-        libusb_cancel_transfer(r->xfer);
++            usb_packet_complete(USB_DEVICE(s), p);
++        }
+     }
+ }
+ 
+@@ -1271,6 +1272,17 @@
+         QTAILQ_REMOVE(&hostdevs, s, next);
+     }
+     usb_host_close(s);
++
++    /* Draining transfers above can schedule the no-device bottom half. */
++    if (s->bh_nodev) {
++        qemu_bh_delete(s->bh_nodev);
++        s->bh_nodev = NULL;
++    }
++    if (s->bh_postld) {
++        qemu_bh_delete(s->bh_postld);
++        s->bh_postld = NULL;
++    }
++    s->bh_postld_pending = false;
+ }
+ 
+ static void usb_host_cancel_packet(USBDevice *udev, USBPacket *p)
+@@ -1523,6 +1535,8 @@
+                                  CONTROL_TIMEOUT);
+     rc = libusb_submit_transfer(r->xfer);
+     if (rc != 0) {
++        /* No completion callback follows a failed submission. */
++        usb_host_req_free(r);
+         p->status = USB_RET_NODEV;
+         trace_usb_host_req_complete(s->bus_num, s->addr, p,
+                                     p->status, p->actual_length);
+@@ -1617,6 +1631,8 @@
+ 
+     rc = libusb_submit_transfer(r->xfer);
+     if (rc != 0) {
++        /* No completion callback follows a failed submission. */
++        usb_host_req_free(r);
+         p->status = USB_RET_NODEV;
+         trace_usb_host_req_complete(s->bus_num, s->addr, p,
+                                     p->status, p->actual_length);

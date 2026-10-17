@@ -1,0 +1,208 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
+/* Safe value/ownership mocks. Nothing below deallocates or dereferences
+ * retired memory: tests check observable contracts using counters only. */
+enum { USB_PACKET_ASYNC = 3, USB_RET_NODEV = -1, USB_RET_ASYNC = -6,
+       USB_RET_ADD_TO_QUEUE = -8, USB_RET_STALL = -3, USB_PACKET_SETUP = 1,
+       USB_TOKEN_IN = 0x69, USB_TOKEN_OUT = 0xe1,
+       USB_DIR_IN = 0x80, USB_SPEED_MASK_SUPER = 8,
+       USB_ENDPOINT_XFER_BULK = 2, USB_ENDPOINT_XFER_INT = 3,
+       USB_ENDPOINT_XFER_ISOC = 1, LIBUSB_ERROR_NO_DEVICE = -4,
+       DeviceOutRequest = 0, InterfaceOutRequest = 0x100,
+       EndpointOutRequest = 0x200, USB_REQ_SET_ADDRESS = 5,
+       USB_REQ_SET_CONFIGURATION = 9, USB_REQ_SET_INTERFACE = 11,
+       USB_REQ_CLEAR_FEATURE = 1, CONTROL_TIMEOUT = 10000,
+       BULK_TIMEOUT = 0, INTR_TIMEOUT = 0 };
+typedef struct USBDevice USBDevice;
+typedef struct USBEndpoint { int nr, type; bool halted; } USBEndpoint;
+typedef struct USBPacket {
+    USBEndpoint *ep;
+    int state, status, actual_length, pid, stream;
+    struct { size_t size; } iov;
+} USBPacket;
+typedef struct USBPort { int speedmask; } USBPort;
+struct USBDevice { unsigned char setup_buf[8]; int speedmask; USBPort *port; };
+struct libusb_transfer { int marker; };
+typedef struct MockBH { bool deleted; } MockBH;
+typedef struct USBHostDevice {
+    USBDevice parent;
+    int bus_num, addr;
+    void *dh;
+    int exit;
+    bool needs_autoscan, bh_postld_pending;
+    MockBH *bh_nodev, *bh_postld;
+} USBHostDevice;
+typedef struct USBHostRequest {
+    USBHostDevice *host;
+    USBPacket *p;
+    bool in, usb3ep0quirk;
+    struct libusb_transfer *xfer;
+    unsigned char *buffer, *cbuf;
+    unsigned int clen;
+} USBHostRequest;
+static USBHostRequest request;
+static struct libusb_transfer transfer;
+static unsigned char buffer[4096];
+static int queued, freed, submitted, cancelled, completed, detached_at_completion;
+static int cancel_before_completion, nodev_scheduled, submit_result;
+static int close_done, bh_deleted, bh_deleted_after_close;
+static bool reenter_on_completion;
+static int hostdevs;
+static MockBH nodev_bh, postld_bh;
+static void usb_host_req_abort(USBHostRequest *r);
+#define USB_DEVICE(s) (&(s)->parent)
+#define USB_HOST_DEVICE(d) ((USBHostDevice *)(d))
+#define QTAILQ_REMOVE(head, item, member) ((void)(head), (void)(item))
+#define trace_usb_host_req_complete(...) ((void)0)
+#define trace_usb_host_req_control(...) ((void)0)
+#define trace_usb_host_req_emulated(...) ((void)0)
+#define trace_usb_host_req_data(...) ((void)0)
+static USBHostRequest *usb_host_req_alloc(USBHostDevice *s, USBPacket *p,
+                                        bool in, size_t size) {
+    (void)size;
+    request.host = s; request.p = p; request.in = in;
+    request.xfer = &transfer; request.buffer = buffer;
+    queued++;
+    return &request;
+}
+static void usb_host_req_free(USBHostRequest *r) {
+    (void)r; queued--; freed++;
+}
+static void usb_host_nodev(USBHostDevice *s) {
+    (void)s; nodev_scheduled++;
+}
+static int libusb_submit_transfer(struct libusb_transfer *x) {
+    (void)x; submitted++; return submit_result;
+}
+static int libusb_cancel_transfer(struct libusb_transfer *x) {
+    (void)x; cancelled++; return 0;
+}
+static void complete(USBDevice *d, USBPacket *p) {
+    (void)d; (void)p;
+    completed++;
+    detached_at_completion = request.p == NULL;
+    cancel_before_completion = cancelled == 1;
+    if (reenter_on_completion) {
+        /* One bounded callback reentry; all storage remains valid. */
+        reenter_on_completion = false;
+        usb_host_req_abort(&request);
+    }
+}
+static void usb_generic_async_ctrl_complete(USBDevice *d, USBPacket *p) { complete(d, p); }
+static void usb_packet_complete(USBDevice *d, USBPacket *p) { complete(d, p); }
+static void qemu_remove_exit_notifier(void *x) { (void)x; }
+static int usb_host_close(USBHostDevice *s) {
+    close_done = 1;
+    /* Model a drain callback that leaves nodev scheduled. */
+    s->bh_nodev = &nodev_bh;
+    return 0;
+}
+static void qemu_bh_delete(MockBH *bh) {
+    bh->deleted = true; bh_deleted++; bh_deleted_after_close += close_done;
+}
+static void usb_host_set_address(USBHostDevice *s, int n) { (void)s; (void)n; }
+static void usb_host_set_config(USBHostDevice *s, int n, USBPacket *p) { (void)s; (void)n; (void)p; }
+static void usb_host_set_interface(USBHostDevice *s, int n, int a, USBPacket *p) { (void)s; (void)n; (void)a; (void)p; }
+static int libusb_clear_halt(void *s, int n) { (void)s; (void)n; return 0; }
+static void usb_ep_set_halted(USBDevice *d, int pid, int ep, int n) { (void)d; (void)pid; (void)ep; (void)n; }
+static bool usb_host_use_combining(USBEndpoint *ep) { (void)ep; return false; }
+static int usb_ep_get_type(USBDevice *d, int pid, int nr) { (void)d; (void)pid; (void)nr; return request.p->ep->type; }
+static size_t usb_packet_size(USBPacket *p) { return p->iov.size; }
+static void usb_packet_copy(USBPacket *p, void *b, size_t n) { (void)p; (void)b; (void)n; }
+static void usb_host_iso_data_in(USBHostDevice *s, USBPacket *p) { (void)s; (void)p; }
+static void usb_host_iso_data_out(USBHostDevice *s, USBPacket *p) { (void)s; (void)p; }
+static void usb_host_req_complete_ctrl(struct libusb_transfer *x) { (void)x; }
+static void usb_host_req_complete_data(struct libusb_transfer *x) { (void)x; }
+static void libusb_fill_control_transfer(struct libusb_transfer *x, void *d,
+    unsigned char *b, void (*cb)(struct libusb_transfer *), void *r, unsigned t) {
+    (void)x; (void)d; (void)b; (void)cb; (void)r; (void)t;
+}
+static void libusb_fill_bulk_transfer(struct libusb_transfer *x, void *d, int ep,
+    unsigned char *b, size_t n, void (*cb)(struct libusb_transfer *), void *r, unsigned t) {
+    (void)x; (void)d; (void)ep; (void)b; (void)n; (void)cb; (void)r; (void)t;
+}
+#define libusb_fill_interrupt_transfer libusb_fill_bulk_transfer
+
+/* EXTRACTED_FUNCTIONS */
+
+static void reset(void) {
+    memset(&request, 0, sizeof(request));
+    memset(&nodev_bh, 0, sizeof(nodev_bh));
+    memset(&postld_bh, 0, sizeof(postld_bh));
+    queued = freed = submitted = cancelled = completed = detached_at_completion = 0;
+    cancel_before_completion = nodev_scheduled = close_done = bh_deleted = 0;
+    bh_deleted_after_close = 0;
+    reenter_on_completion = false;
+}
+static int failures, tests;
+#define CHECK(condition, label) do { tests++; if (!(condition)) { \
+    printf("contract assertion failed: %s\n", label); failures++; } } while (0)
+static void submission_case(bool control, int type, int error) {
+    USBHostDevice s = {0}; USBPacket p = {0}; USBEndpoint ep = {0}; USBPort port = {0};
+    unsigned char data[8] = {0};
+    reset();
+    s.dh = &s; s.parent.port = &port;
+    ep.nr = 1; ep.type = type;
+    p.ep = &ep; p.iov.size = 8; p.pid = USB_TOKEN_IN;
+    request.p = &p; submit_result = error;
+    if (control) { usb_host_handle_control(&s.parent, &p, 0xffff, 0, 0, 8, data); }
+    else { usb_host_handle_data(&s.parent, &p); }
+    CHECK(submitted == 1, "submission attempts exactly once");
+    if (error) {
+        CHECK(queued == 0 && freed == 1, "failed submission retires queued request exactly once");
+        CHECK(p.status == USB_RET_NODEV, "failed submission completes packet with NODEV");
+    } else {
+        CHECK(queued == 1 && freed == 0, "successful submission retains queued request");
+        CHECK(p.status == USB_RET_ASYNC, "successful submission reports ASYNC");
+    }
+    CHECK(cancelled == 0, "submission does not cancel a transfer");
+    CHECK(nodev_scheduled == (error == LIBUSB_ERROR_NO_DEVICE), "only NO_DEVICE schedules removal");
+}
+static void abort_case(int ep_number, bool reenter) {
+    USBHostDevice s = {0}; USBPacket p = {0}; USBEndpoint ep = {0};
+    reset();
+    ep.nr = ep_number; p.ep = &ep; p.state = USB_PACKET_ASYNC;
+    usb_host_req_alloc(&s, &p, true, 0);
+    reenter_on_completion = reenter;
+    usb_host_req_abort(&request);
+    CHECK(request.p == NULL, "abort detaches packet");
+    CHECK(detached_at_completion, "packet detached before controller completion");
+    CHECK(cancel_before_completion, "libusb cancellation starts before controller completion");
+    CHECK(cancelled == 1 && completed == 1, "abort cancels and completes exactly once");
+    CHECK(freed == 0 && queued == 1, "abort retains transfer until asynchronous callback");
+    CHECK(p.status == USB_RET_NODEV, "abort reports NODEV");
+    usb_host_req_abort(&request);
+    CHECK(cancelled == 1, "second abort does not cancel twice");
+    CHECK(completed == 1, "second abort or callback reentry does not complete twice");
+}
+static void unrealize_case(void) {
+    USBHostDevice s = {0};
+    reset(); s.bh_nodev = &nodev_bh; s.bh_postld = &postld_bh;
+    s.bh_postld_pending = true;
+    usb_host_unrealize(&s.parent);
+    CHECK(close_done, "unrealize drains device");
+    CHECK(bh_deleted == 2 && bh_deleted_after_close == 2, "both bottom halves deleted after drain");
+    CHECK(nodev_bh.deleted && postld_bh.deleted, "no pending callback survives unrealize");
+    CHECK(!s.bh_nodev && !s.bh_postld && !s.bh_postld_pending, "bottom-half state cleared");
+}
+int main(void) {
+    submission_case(true, 0, LIBUSB_ERROR_NO_DEVICE);
+    submission_case(true, 0, -1);
+    submission_case(false, USB_ENDPOINT_XFER_BULK, LIBUSB_ERROR_NO_DEVICE);
+    submission_case(false, USB_ENDPOINT_XFER_BULK, -1);
+    submission_case(false, USB_ENDPOINT_XFER_INT, LIBUSB_ERROR_NO_DEVICE);
+    submission_case(false, USB_ENDPOINT_XFER_INT, -1);
+    submission_case(true, 0, 0);
+    submission_case(false, USB_ENDPOINT_XFER_BULK, 0);
+    submission_case(false, USB_ENDPOINT_XFER_INT, 0);
+    abort_case(0, false); abort_case(1, false);
+    abort_case(0, true); abort_case(1, true);
+    unrealize_case();
+    printf("%d contract assertions, %d failures\n", tests, failures);
+    return failures ? 1 : 0;
+}

@@ -3,7 +3,8 @@
 *.sh text eol=lf
 *.ps1 text eol=lf
 *.json text eol=lf
-*.patch text eol=lf
+*.patch text eol=lf whitespace=-blank-at-eol
+*.c.in text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
 *.jpg binary

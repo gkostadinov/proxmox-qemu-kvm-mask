@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import urllib.request
 
 from .common import Error, data_root, digest, read_json, run, sha, write_json
@@ -97,6 +98,10 @@ def prepare_qemu(repo: Path, recipe: dict, work: Path) -> Path:
     apply_patch(source, download_patch(spec, work))
     for name in spec['patches']:
         apply_patch(source, (data_root() / 'patches' / name).read_text())
+    # Exercise the prepared source's error paths before packaging QEMU.
+    usb_test = run(sys.executable, str(data_root() / 'tools/test_usb_lifetime.py'),
+                   str(source / 'hw/usb/host-libusb.c'))
+    (work / 'usb-lifetime-contract.txt').write_text(usb_test)
     # Original plain artwork; no upstream splash image or image library needed.
     splash = data_root() / 'assets/blank-splash.jpg'
     if sha(splash) != spec['splash_sha256']:
@@ -104,7 +109,8 @@ def prepare_qemu(repo: Path, recipe: dict, work: Path) -> Path:
     shutil.copy2(splash, source / 'pc-bios/bootsplash.jpg')
     changelog = source / 'debian/changelog'
     entry = (f"pve-qemu-kvm ({spec['version']}) trixie; urgency=medium\n\n"
-             "  * Add optional board platform identity and routing names.\n\n"
+             "  * Add optional board platform identity and routing names.\n"
+             "  * Correct USB host request and deferred callback lifetimes.\n\n"
              " -- Local Builder <builder@example.invalid>  Mon, 12 Oct 2026 00:00:00 +0000\n\n")
     changelog.write_text(entry + changelog.read_text())
     return source

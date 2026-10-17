@@ -22,6 +22,8 @@ Coverage is selective. Virtual GPU, timing, debug-trap, measured-boot and some M
 
 The included recipe targets **Proxmox 9 on Intel x86_64, kernel 7.0.14-22-pve, QEMU 11.1.1 and OVMF 4.2026.08**. Unknown combinations stop before installation. Source commits, patch hashes, kernel symbol compatibility and module signatures are checked explicitly.
 
+QEMU builds include [USB passthrough lifetime fixes](docs/USB-LIFETIME.md) for failed transfer submission and device removal. The recipe produces `11.1.1-2+vmp2` and checks the patched USB error paths before compilation.
+
 **Experimental.** Automated tests cover planning, artifact integrity and simulated rollback. End-to-end installation, recovery and host reboot behavior are not yet verified on a disposable Proxmox host. Evaluate the installer on a test host before using it with valuable guests.
 
 ## Build and installation workflow

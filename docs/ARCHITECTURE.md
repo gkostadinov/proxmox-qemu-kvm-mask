@@ -17,9 +17,13 @@ The source entry point is `setup.sh`, which forwards to the internal Python pack
 
 ## Initial recipe
 
-`recipes/pve9-intel-7.0.14-22.json` pins Proxmox QEMU, kernel and firmware repositories and their upstream submodules. It accepts the tested QEMU base versions 11.0.3-4 and 11.1.1-2, builds 11.1.1-2+vmp1 and requires the exact running kernel and firmware package. Local QEMU suffixes may be detected for planning, but installation additionally requires a stock KVM core and an exact rollback package.
+`recipes/pve9-intel-7.0.14-22.json` pins Proxmox QEMU, kernel and firmware repositories and their upstream submodules. It accepts the tested QEMU base versions 11.0.3-4 and 11.1.1-2, builds 11.1.1-2+vmp2 and requires the exact running kernel and firmware package. Local QEMU suffixes may be detected for planning, but installation additionally requires a stock KVM core and an exact rollback package.
 
 The QEMU base patch is downloaded from a pinned AICodo release and verified by SHA-256. The unused HPPA firmware hunk is excluded, matching the selected x86 build. QEMU's upstream patch is followed by the local board and routing patches. The board option is disabled by default; VFIO devices are excluded from identity rewriting.
+
+The USB lifetime patch then frees requests whose libusb submission failed, detaches packets before cancellation/completion callbacks, and deletes deferred callbacks after device teardown drains transfers. This prevents unsent requests from retaining a packet that the controller can release, and prevents completion reentry from seeing the original pending packet. These fixes are independent of the optional board profile.
+
+Before compiling QEMU, source preparation extracts the patched control/data submission, abort and unrealize functions into a C contract harness. The harness checks ownership and callback ordering with mocks; it does not simulate a physical USB hub or replace guest runtime testing. CI additionally checks strict patch application to the hash-pinned upstream file and requires the original source to fail the same contracts. See [USB lifetime validation](USB-LIFETIME.md).
 
 Routing NameSeg changes apply at the encoder, covering declarations and references together. Existing package lengths, IRQ values and resources are retained. MADT interrupt-source overrides and CPU timing behavior are not changed.
 

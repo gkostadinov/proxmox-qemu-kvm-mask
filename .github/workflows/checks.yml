@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -v
+      - run: python tools/check_usb_lifetime_patch.py
       - run: python -m compileall -q vmpkit
       - run: ./setup.sh plan --snapshot examples/inventory.synthetic.json --vmid 200 > /tmp/example-plan.json
       - run: python -m pip wheel --no-deps . -w /tmp/wheels

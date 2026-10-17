@@ -12,6 +12,8 @@ Use a fresh work directory on a filesystem with at least 35 GiB available and no
 
 Git checkouts are detached at pinned commits. Nested EDK II submodules use the gitlinks from the pinned upstream commit. Proxmox's packaging and firmware patches are applied before local changes. `patch --fuzz=0` is required. QEMU wrap dependencies retain their upstream checksum definitions.
 
+QEMU preparation also compiles and runs the USB lifetime contract harness against the actual patched source. A failed check stops the build; its output is saved as `work/usb-lifetime-contract.txt`. GCC or another C compiler must be available. For the independent upstream/baseline check, run `python3 tools/check_usb_lifetime_patch.py`; this downloads one hash-pinned source file and uses only a temporary directory.
+
 The optional `--source-cache` accepts local repositories arranged as `pve-qemu`, `pve-kernel` and `pve-edk2-firmware`, with the matching submodule commits available. It avoids repeated downloads without modifying the cached repositories.
 
 ## ABI and signing
