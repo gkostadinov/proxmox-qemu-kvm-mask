@@ -1,0 +1,278 @@
+#!/usr/bin/perl
+# SPDX-License-Identifier: GPL-2.0-only
+# Apply pending host-USB settings for one Proxmox 'other' OS guest.
+# Does not change Proxmox packages, OS type, or PCI controllers.
+use strict;
+use warnings;
+use Digest::SHA qw(sha256_hex);
+use File::Path qw(make_path);
+use Getopt::Long qw(GetOptions);
+use Time::HiRes qw(sleep time);
+use PVE::Cluster;
+use PVE::QemuConfig;
+use PVE::QemuServer;
+use PVE::QemuServer::Machine;
+use PVE::QemuServer::Monitor qw(mon_cmd);
+use PVE::QemuServer::USB;
+use PVE::JSONSchema;
+
+my ($vmid, $once, $check);
+GetOptions('vmid=i' => \$vmid, 'once' => \$once, 'check' => \$check)
+    or die "usage: pve-usb-hotplug --vmid VMID [--check | --once]\n";
+die "usage: pve-usb-hotplug --vmid VMID [--check | --once]\n"
+    if !defined($vmid) || $vmid !~ /^[1-9][0-9]{2,8}$/ || ($once && $check);
+my $state_dir = "/var/lib/pve-usb-hotplug/$vmid";
+my $stop = 0;
+$SIG{TERM} = $SIG{INT} = sub { $stop = 1; };
+$| = 1;
+make_path($state_dir, { mode => 0700 }) if !$check;
+make_path("$state_dir/backups", { mode => 0700 }) if !$check;
+
+sub note { print scalar(localtime) . " VM$vmid: $_[0]\n"; }
+sub qget { return mon_cmd($vmid, 'qom-get', path => $_[0], property => $_[1]); }
+sub peripherals {
+    return { map { $_->{name} => $_->{type} }
+        @{mon_cmd($vmid, 'qom-list', path => '/machine/peripheral')} };
+}
+sub verify_identity {
+    my ($conf, $pin) = @_;
+    die "VM $vmid must use ostype=other\n" if ($conf->{ostype} // '') ne 'other';
+    my ($id) = ($conf->{smbios1} // '') =~ /(?:^|,)uuid=([0-9a-f-]{36})(?:,|$)/i;
+    $id //= $conf->{vmgenid} if ($conf->{vmgenid} // '') =~ /^[0-9a-f-]{36}$/i;
+    die "VM $vmid needs a stable SMBIOS UUID or VM generation ID\n" if !$id;
+    my $digest = sha256_hex(lc($id));
+    my $file = "$state_dir/identity.sha256";
+    if (-f $file) {
+        open(my $in, '<', $file) or die "read identity pin: $!\n";
+        my $saved = <$in>;
+        close($in);
+        $saved =~ s/\s+\z//;
+        die "VM $vmid identity changed; refusing USB changes\n" if $saved ne $digest;
+    } elsif ($pin) {
+        my $temp = "$file.tmp.$$";
+        open(my $out, '>', $temp) or die "create identity pin: $!\n";
+        chmod(0600, $temp);
+        print $out "$digest\n";
+        close($out) or die "write identity pin: $!\n";
+        rename($temp, $file) or die "publish identity pin: $!\n";
+    }
+}
+sub verify_machine {
+    my $machine = PVE::QemuServer::Machine::get_current_qemu_machine($vmid);
+    die "VM $vmid has no running QEMU machine to inspect\n" if !$machine;
+    die "VM $vmid machine $machine is older than 7.1; USB hotplug is unsupported\n"
+        if !PVE::QemuServer::Machine::is_machine_version_at_least($machine, 7, 1);
+    return $machine;
+}
+sub controllers {
+    my $items = peripherals();
+    my @names = sort grep {
+        ($items->{$_} // '') =~ /^child<(?:nec-usb|qemu)-xhci>$/
+    } keys %$items;
+    @names = sort { ($a eq 'xhci' ? 0 : 1) <=> ($b eq 'xhci' ? 0 : 1) || $a cmp $b } @names;
+    return map { "$_.0" } @names;
+}
+sub selectors {
+    my ($value) = @_;
+    my $d = PVE::JSONSchema::parse_property_string('pve-qm-usb', $value);
+    die "SPICE redirection is not handled by this host-USB helper\n"
+        if $d->{host} && lc($d->{host}) eq 'spice';
+    my $p = PVE::QemuServer::USB::parse_usb_device($d->{host}, $d->{mapping});
+    if (defined($p->{hostbus}) && defined($p->{hostport})) {
+        return { hostbus => int($p->{hostbus}), hostport => "$p->{hostport}" };
+    }
+    if (defined($p->{vendorid}) && defined($p->{productid})) {
+        return { vendorid => hex($p->{vendorid}), productid => hex($p->{productid}) };
+    }
+    die "USB selector is not a host port or vendor/product pair\n";
+}
+sub live_device {
+    my ($id) = @_;
+    my $items = peripherals();
+    return undef if !exists($items->{$id});
+    die "$id is not a usb-host device\n" if $items->{$id} ne 'child<usb-host>';
+    my $path = "/machine/peripheral/$id";
+    my $p = { map { $_ => qget($path, $_) } qw(hostbus hostport vendorid productid) };
+    my $buspath = qget($path, 'parent_bus');
+    $p->{bus} = ($buspath =~ m{/([^/]+)$})[0];
+    # An empty port denotes a boot-time automatic assignment; do not force it on rollback.
+    my $port = qget($path, 'port');
+    $p->{port} = $port if length($port);
+    return $p;
+}
+sub matches {
+    my ($live, $wanted) = @_;
+    return 0 if !$live;
+    for my $key (keys %$wanted) {
+        return 0 if !defined($live->{$key}) || "$live->{$key}" ne "$wanted->{$key}";
+    }
+    return 1;
+}
+sub remove_device {
+    my ($id) = @_;
+    return if !live_device($id);
+    mon_cmd($vmid, 'device_del', id => $id);
+    PVE::QemuServer::qemu_devicedelverify($vmid, $id, 5);
+}
+sub add_device {
+    my ($id, $wanted, $preferred) = @_;
+    my @controllers = $preferred ? ($preferred, controllers()) : controllers();
+    my %seen;
+    for my $bus (grep { !$seen{$_}++ } @controllers) {
+        my ($controller) = $bus =~ /^([A-Za-z0-9_.-]+)\.0$/;
+        next if !$controller || !grep { $_ eq $bus } controllers();
+        my $path = "/machine/peripheral/$controller";
+        my $p2 = qget($path, 'p2');
+        my $p3 = qget($path, 'p3');
+        # Both speeds must fit the chosen connector. Explicit ports prevent QEMU
+        # silently creating a USB2 hub when only one root port remains free.
+        my $ports = $p2 < $p3 ? $p2 : $p3;
+        for my $port (1 .. $ports) {
+            my $ok = eval {
+                mon_cmd($vmid, 'device_add', driver => 'usb-host', id => $id,
+                    bus => $bus, port => "$port", %$wanted);
+                1;
+            };
+            if ($ok) {
+                die "$id live selector verification failed\n" if !matches(live_device($id), $wanted);
+                return $bus;
+            }
+            my $err = $@;
+            die $err if $err !~ /(?:port .*already in use|usb port \d+ \(bus \Q$bus\E\) not found \(in use\?\))/i;
+        }
+    }
+    die "No free connector on the existing xHCI controllers\n";
+}
+sub backup_config {
+    my $stamp = sprintf('%.6f', time);
+    open(my $src, '<', "/etc/pve/qemu-server/$vmid.conf") or die "read config: $!\n";
+    local $/;
+    my $raw = <$src>;
+    close($src);
+    open(my $dst, '>', "$state_dir/backups/$stamp.conf") or die "backup config: $!\n";
+    chmod(0600, "$state_dir/backups/$stamp.conf");
+    print $dst $raw;
+    close($dst) or die "write backup: $!\n";
+    my @files = sort glob("$state_dir/backups/*.conf");
+    while (@files > 100) { unlink(shift @files) or die "rotate backup: $!\n"; }
+}
+sub apply_pending {
+    PVE::Cluster::cfs_update();
+    PVE::QemuConfig->lock_config_full($vmid, 2, sub {
+        PVE::Cluster::cfs_update();
+        my $conf = PVE::QemuConfig->load_config($vmid);
+        PVE::QemuConfig->check_lock($conf);
+        verify_identity($conf, 1);
+        my $features = PVE::QemuServer::parse_hotplug_features($conf->{hotplug} // '1');
+        return if !$features->{usb};
+        return if mon_cmd($vmid, 'query-status')->{status} ne 'running';
+        verify_machine();
+        my $pending = $conf->{pending} // {};
+        my $deletes = PVE::QemuConfig->parse_pending_delete($pending->{delete});
+        my @keys = sort { substr($a, 3) <=> substr($b, 3) }
+            grep { /^usb[0-4]$/ } keys %{ { %$pending, %$deletes } };
+        for my $id (@keys) {
+            my $deleting = exists($deletes->{$id});
+            my $value = $pending->{$id};
+            # Resolve and validate mappings before detaching any existing device.
+            my $wanted = $deleting ? undef : selectors($value);
+            my $old = live_device($id);
+            backup_config();
+            my $bus;
+            my $ok = eval {
+                if ($deleting) {
+                    remove_device($id);
+                } elsif (!matches($old, $wanted)) {
+                    remove_device($id) if $old;
+                    $bus = add_device($id, $wanted);
+                }
+                1;
+            };
+            if (!$ok) {
+                my $err = $@;
+                my $current = eval { live_device($id) };
+                if ($@) {
+                    note("WARNING: $id could not inspect live state for rollback: $@");
+                } elsif (!$old && $current) {
+                    my $removed = eval { remove_device($id); 1; };
+                    note("WARNING: $id cleanup failed: $@") if !$removed;
+                } elsif ($old && !matches($current, $old)) {
+                    my $restored = eval {
+                        remove_device($id);
+                        my %props = map { $_ => $old->{$_} } qw(hostbus hostport vendorid productid);
+                        add_device($id, \%props, $old->{bus});
+                        1;
+                    };
+                    note("WARNING: $id rollback failed: $@") if !$restored;
+                }
+                die "$id failed; pending setting retained: $err";
+            }
+            if ($deleting) {
+                delete $conf->{$id};
+                PVE::QemuConfig->remove_from_pending_delete($conf, $id);
+                # The API normally removes a simultaneous pending addition itself.
+                delete $pending->{$id};
+            } else {
+                # usb3 selects the guest controller, not the peripheral's speed.
+                # Keep live and subsequent cold-start routing on xHCI.
+                my $saved = PVE::JSONSchema::parse_property_string('pve-qm-usb', $value);
+                $saved->{usb3} = 1;
+                $conf->{$id} = PVE::JSONSchema::print_property_string($saved, 'pve-qm-usb');
+                delete $pending->{$id};
+            }
+            PVE::QemuConfig->write_config($vmid, $conf);
+            note($deleting ? "removed $id live" : "applied $id live" . ($bus ? " on $bus" : ' (already present)'));
+        }
+    });
+}
+
+my ($last_hash, $last_try, $last_error) = ('', 0, '');
+if ($check) {
+    PVE::Cluster::cfs_update();
+    my $conf = PVE::QemuConfig->load_config($vmid);
+    verify_identity($conf, 0);
+    my $features = PVE::QemuServer::parse_hotplug_features($conf->{hotplug} // '1');
+    die "USB hotplug disabled in VM $vmid\n" if !$features->{usb};
+    die "VM $vmid must be running for the live-controller preflight\n"
+        if !-f "/run/qemu-server/$vmid.pid";
+    my $machine = verify_machine();
+    die "VM $vmid is not running\n" if mon_cmd($vmid, 'query-status')->{status} ne 'running';
+    my @available = controllers();
+    die "VM $vmid has no live xHCI controller; guest PCI hotplug may not enumerate\n"
+        if !@available;
+    print "VM $vmid host preflight passed (machine $machine, ostype=other, "
+        . scalar(@available) . " live xHCI controller(s)); verify guest enumeration separately\n";
+    exit 0;
+}
+note('USB pending-setting helper started');
+while (!$stop) {
+    my $ok = eval {
+        open(my $file, '<', "/etc/pve/qemu-server/$vmid.conf") or die "config unavailable: $!\n";
+        local $/;
+        my $raw = <$file>;
+        close($file);
+        my $pid = '';
+        if (open(my $pf, '<', "/run/qemu-server/$vmid.pid")) { $pid = <$pf> // ''; close($pf); }
+        my $hash = sha256_hex($raw . $pid);
+        if ($hash ne $last_hash || time - $last_try >= 30) {
+            $last_hash = $hash;
+            $last_try = time;
+            my ($pending_text) = $raw =~ /^\[PENDING\]\s*\n(.*?)(?=^\[|\z)/ms;
+            if ($pid && defined($pending_text)
+                && $pending_text =~ /^(?:usb[0-4]:|delete:.*\busb[0-4]\b)/m) {
+                apply_pending();
+            }
+        }
+        $last_error = '';
+        1;
+    };
+    if (!$ok) {
+        my $err = $@;
+        note("ERROR: $err") if $err ne $last_error;
+        $last_error = $err;
+        exit(1) if $once;
+    }
+    last if $once;
+    sleep(1);
+}
+note('USB pending-setting helper stopped');

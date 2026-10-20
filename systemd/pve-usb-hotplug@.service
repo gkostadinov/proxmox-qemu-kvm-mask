@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Apply pending host USB assignments for Proxmox VM %i
+After=pve-cluster.service pvedaemon.service
+Requires=pve-cluster.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/pve-usb-hotplug --vmid %i
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+StateDirectory=pve-usb-hotplug
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

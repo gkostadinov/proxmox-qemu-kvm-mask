@@ -24,7 +24,9 @@ The included recipe targets **Proxmox 9 on Intel x86_64, kernel 7.0.14-22-pve, Q
 
 QEMU builds include [USB passthrough lifetime fixes](docs/USB-LIFETIME.md) for failed transfer submission and device removal. The recipe produces `11.1.1-2+vmp2` and checks the patched USB error paths before compilation.
 
-**Experimental.** Automated tests cover planning, artifact integrity and simulated rollback. End-to-end installation, recovery and host reboot behavior are not yet verified on a disposable Proxmox host. Evaluate the installer on a test host before using it with valuable guests.
+For guests configured as Proxmox OS type `other`, a separate [host USB hotplug helper](docs/USB-HOTPLUG.md) can apply USB changes from the normal Hardware panel without a VM restart. It uses an existing xHCI controller and does not modify the QEMU/KVM masking build or Proxmox packages. It has been tested on Proxmox 9.2 with a running macOS guest; other guests need their own runtime verification.
+
+**The masking build and installer are experimental.** Automated tests cover planning, artifact integrity and simulated rollback. End-to-end installation, recovery and host reboot behavior are not yet verified on a disposable Proxmox host. Evaluate that installer on a test host before using it with valuable guests. The independent USB hotplug helper has its own [support limits and validation](docs/USB-HOTPLUG.md).
 
 ## Build and installation workflow
 
@@ -97,6 +99,8 @@ Rollback also defaults to dry-run. Add `--execute` to perform it. Read [transact
 - [Architecture and recipe boundaries](docs/ARCHITECTURE.md)
 - [Build prerequisites and source provenance](docs/BUILDING.md)
 - [Transactions and rollback](docs/TRANSACTIONS.md)
+- [USB passthrough lifetime fix](docs/USB-LIFETIME.md)
+- [USB hotplug for `other` OS guests](docs/USB-HOTPLUG.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 The original tooling is licensed under GPL-2.0-only. Upstream components retain their own licenses and notices. This repository contains small QEMU/KVM patches and build orchestration; upstream source trees and binaries are not vendored.
