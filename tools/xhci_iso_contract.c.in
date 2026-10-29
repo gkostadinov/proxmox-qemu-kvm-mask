@@ -1,0 +1,43 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include <stdint.h>
+#include <stdio.h>
+typedef struct { int unused; } XHCIState;
+typedef struct { uint32_t control; } TRB;
+typedef struct { TRB *trbs; uint64_t mfindex_kick; } XHCITransfer;
+typedef struct { uint64_t interval, mfindex_last; } XHCIEPContext;
+#define TRB_TR_FRAMEID_SHIFT 20
+#define TRB_TR_FRAMEID_MASK 0x7ff
+#define TRB_TR_SIA (1U << 31)
+/* EXTRACTED_FUNCTION */
+static unsigned checks, failures;
+static void check(int ok) { checks++; if (!ok) failures++; }
+static uint64_t calc(uint64_t now, uint64_t target, unsigned sia, uint64_t interval, uint64_t last) {
+    TRB trb = { (uint32_t)(((target >> 3) & TRB_TR_FRAMEID_MASK) << TRB_TR_FRAMEID_SHIFT) | (sia ? TRB_TR_SIA : 0) };
+    XHCITransfer x = { &trb, 0 };
+    XHCIEPContext ep = { interval, last };
+    XHCIState state = { 0 };
+    xhci_calc_iso_kick(&state, &x, &ep, now);
+    return x.mfindex_kick;
+}
+int main(void) {
+    const uint64_t epochs[] = { 0, 16384, 1048576 };
+    const uint64_t future[] = { 0, 8, 256, 3200, 7160 };
+    unsigned e, i, interval;
+    for (e = 0; e < 3; e++) {
+        uint64_t now = epochs[e] + 10000, overdue;
+        for (i = 0; i < 5; i++)
+            check(calc(now, now + future[i], 0, 8, now) == now + future[i]);
+        /* Delays just beyond the lookahead must not wait for the next epoch. */
+        for (overdue = 264; overdue <= 640; overdue += 8)
+            check(calc(now, now - overdue, 0, 8, now) == now);
+        /* Schedule Immediately keeps its existing near/far interval behavior. */
+        for (interval = 1; interval <= 32; interval *= 2) {
+            uint64_t asap = (now + interval - 1) & ~((uint64_t)interval - 1);
+            check(calc(now, now, 1, interval, asap) == asap + interval);
+            check(calc(now, now, 1, interval, asap - 5 * interval) == asap);
+        }
+    }
+    printf("%u checks, %u failures%s\n", checks, failures,
+           failures ? ": contract assertion failed" : "");
+    return failures ? 1 : 0;
+}

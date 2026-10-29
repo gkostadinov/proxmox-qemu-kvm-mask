@@ -22,4 +22,4 @@ include-package-data = true
 "share/vmpkit/recipes" = ["recipes/*.json"]
 "share/vmpkit/patches" = ["patches/*.patch"]
 "share/vmpkit/assets" = ["assets/*.jpg"]
-"share/vmpkit/tools" = ["tools/test_usb_lifetime.py", "tools/usb_lifetime_contract.c.in"]
+"share/vmpkit/tools" = ["tools/test_usb_lifetime.py", "tools/usb_lifetime_contract.c.in", "tools/test_xhci_iso_scheduling.py", "tools/xhci_iso_contract.c.in"]

@@ -102,6 +102,9 @@ def prepare_qemu(repo: Path, recipe: dict, work: Path) -> Path:
     usb_test = run(sys.executable, str(data_root() / 'tools/test_usb_lifetime.py'),
                    str(source / 'hw/usb/host-libusb.c'))
     (work / 'usb-lifetime-contract.txt').write_text(usb_test)
+    iso_test = run(sys.executable, str(data_root() / 'tools/test_xhci_iso_scheduling.py'),
+                   str(source / 'hw/usb/hcd-xhci.c'))
+    (work / 'xhci-iso-contract.txt').write_text(iso_test)
     # Original plain artwork; no upstream splash image or image library needed.
     splash = data_root() / 'assets/blank-splash.jpg'
     if sha(splash) != spec['splash_sha256']:
@@ -110,7 +113,8 @@ def prepare_qemu(repo: Path, recipe: dict, work: Path) -> Path:
     changelog = source / 'debian/changelog'
     entry = (f"pve-qemu-kvm ({spec['version']}) trixie; urgency=medium\n\n"
              "  * Add optional board platform identity and routing names.\n"
-             "  * Correct USB host request and deferred callback lifetimes.\n\n"
+             "  * Correct USB host request and deferred callback lifetimes.\n"
+             "  * Clamp overshot xHCI isochronous frame scheduling.\n\n"
              " -- Local Builder <builder@example.invalid>  Mon, 12 Oct 2026 00:00:00 +0000\n\n")
     changelog.write_text(entry + changelog.read_text())
     return source

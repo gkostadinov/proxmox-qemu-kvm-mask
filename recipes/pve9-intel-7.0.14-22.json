@@ -18,14 +18,15 @@
     "commit": "cb85b70c40df8eb7fbad2ed9ce707f8767c3e41e",
     "submodule": "qemu",
     "upstream_commit": "c3d48b7d1e89604920e5b81b91140c2ad39a1943",
-    "version": "11.1.1-2+vmp2",
+    "version": "11.1.1-2+vmp3",
     "build_dir": "pve-qemu-kvm-11.1.1",
     "base_patch_url": "https://github.com/AICodo/pve-emu-realpc/releases/download/v20261004-104985-pve9-x64/qemu-autoGenPatch.patch",
     "base_patch_sha256": "4f461886b57e31e0f714f138cf75f4de90d88be8328a89a92c70a3b785179fc1",
     "patches": [
       "qemu-board.patch",
       "qemu-routing.patch",
-      "qemu-usb-lifetime.patch"
+      "qemu-usb-lifetime.patch",
+      "qemu-xhci-iso-scheduling.patch"
     ],
     "splash_sha256": "bca8a2ab956a1f5ed96f97258e525463bbc00e81d0b862e338d4c689050ca59c"
   },

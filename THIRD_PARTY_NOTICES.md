@@ -13,3 +13,5 @@ Original build orchestration and tests are GPL-2.0-only; see `LICENSE`. Small pa
 | Base QEMU patch | https://github.com/AICodo/pve-emu-realpc — credited source of the SHA-256-pinned QEMU modifications; file-level upstream licenses remain applicable |
 
 Firmware modifications are generated against the local EDK II source and retain its applicable license. Preserve nested dependency licenses when distributing complete source or binaries. Review the exact downloaded sources and notices for a binary release; this list is an attribution map rather than a substitute for their license texts.
+
+The xHCI ISO scheduling guard follows the QEMU developer proposal by Tong Liang Chew and Dongwon Kim, [Clamp overshot isochronous kick time](https://mid.mail-archive.com/qemu-devel@nongnu.org/msg1228666.html). It retains the modified QEMU file license.

@@ -1,0 +1,11 @@
+--- a/hw/usb/hcd-xhci.c
++++ b/hw/usb/hcd-xhci.c
+@@ -1770,4 +1770,8 @@
+             xfer->mfindex_kick += 0x4000;
+         }
++        /* A late frame must not defer ISO traffic by a full epoch. */
++        if (xfer->mfindex_kick > mfindex + 0x1BF8) {
++            xfer->mfindex_kick = mfindex;
++        }
+     }
+ }
