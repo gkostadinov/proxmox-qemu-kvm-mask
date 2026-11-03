@@ -17,6 +17,15 @@ from .plan import identity_from_host, select_recipe, validate_identity
 GIT_OPTIONS = ('-c', 'url.https://git.proxmox.com/git/.insteadOf=git://git.proxmox.com/git/')
 
 
+def build_host(host: dict, components: list[str], target_kernel: str | None = None) -> dict:
+    """Select a build target without changing the live host or deployment plan."""
+    if target_kernel is None:
+        return host
+    if components != ['kernel']:
+        raise Error('--target-kernel requires --components kernel; QEMU and firmware stay unchanged.')
+    return host | {'kernel': target_kernel}
+
+
 def checkout(spec: dict, destination: Path, cache: Path | None = None) -> None:
     if destination.exists():
         if run('git', '-C', str(destination), 'rev-parse', 'HEAD').strip() != spec['commit']:
@@ -191,7 +200,7 @@ def parse_imports(text: str) -> dict[str, str]:
 
 def validate_abi(module: Path, exported: Path, headers: Path, kernel: str) -> dict:
     if not run('modinfo', '-F', 'vermagic', str(module)).startswith(kernel + ' '):
-        raise Error('Module vermagic does not match the running kernel.')
+        raise Error('Module vermagic does not match the target kernel.')
     expected = parse_symvers((headers / 'Module.symvers').read_text())
     built = parse_symvers(exported.read_text())
     core_exports = {s: crc for s, (crc, owner) in built.items() if owner.endswith('/kvm') or owner == 'kvm'}
@@ -203,7 +212,7 @@ def validate_abi(module: Path, exported: Path, headers: Path, kernel: str) -> di
         raise Error('KVM imported symbol CRC mismatch.')
     consumers = {}
     for name in ('kvm_intel', 'kvm_amd'):
-        path = run('modinfo', '-n', name).strip()
+        path = run('modinfo', '-k', kernel, '-n', name).strip()
         needs = parse_imports(run('modprobe', '--dump-modversions', path))
         if any(s in expected_exports and core_exports.get(s) != crc for s, crc in needs.items()):
             raise Error('Stock KVM consumer CRC mismatch.')
@@ -236,7 +245,9 @@ def run_edk2(source: Path, flags: list[str]) -> str:
 
 def build(host: dict, work: Path, identity: dict | None, jobs: int,
           components: list[str], cache: Path | None = None,
-          key: Path | None = None, certificate: Path | None = None) -> dict:
+          key: Path | None = None, certificate: Path | None = None,
+          target_kernel: str | None = None) -> dict:
+    host = build_host(host, components, target_kernel)
     recipe = select_recipe(host)
     ident = validate_identity(identity) if identity else identity_from_host(host)
     work = work.resolve()
@@ -259,6 +270,8 @@ def build(host: dict, work: Path, identity: dict | None, jobs: int,
     }
     if manifest['recipe_digest'] != digest(recipe) or manifest['identity'] != ident:
         raise Error('Work directory belongs to a different build recipe or identity.')
+    if manifest.get('patches') != {p.name: sha(p) for p in (data_root() / 'patches').glob('*.patch')}:
+        raise Error('Work directory source patches changed; use a fresh work directory.')
     sources = work / 'sources'
     sources.mkdir(exist_ok=True)
     for component in components:

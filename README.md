@@ -4,7 +4,7 @@
 
 System detection, version-matched builds, dry-run, validation and rollback support that patching workflow. Hardware identity comes from reviewed host metadata, and the VM's existing UUID is preserved.
 
-The planner, guest checks and KVM helper target the included Proxmox recipe for marker masking.
+The planner, guest checks and KVM helper target the included Proxmox recipes for marker masking.
 
 ## Markers it changes
 
@@ -20,13 +20,17 @@ Coverage is selective. Virtual GPU, timing, debug-trap, measured-boot and some M
 
 ## Supported starting point
 
-The included recipe targets **Proxmox 9 on Intel x86_64, kernel 7.0.14-22-pve, QEMU 11.1.1 and OVMF 4.2026.08**. Unknown combinations stop before installation. Source commits, patch hashes, kernel symbol compatibility and module signatures are checked explicitly.
+The current recipe targets **Proxmox 9 on Intel x86_64, kernel 7.0.14-26-pve, QEMU 11.1.1 and OVMF 4.2026.08**. It retains the custom KVM hypercall behavior while using a vendor kernel containing the CVE-2026-98432 fix. Exact package versions are listed in [the recipe](recipes/pve9-intel-7.0.14-26.json). Unknown combinations stop before installation. Source commits, patch hashes, kernel symbol compatibility and module signatures are checked explicitly.
 
-QEMU builds include [USB passthrough lifetime fixes](docs/USB-LIFETIME.md) for failed transfer submission and device removal. The recipe produces `11.1.1-2+vmp2` and checks the patched USB error paths before compilation.
+The older `7.0.14-22-pve` recipe remains for reproducing that configuration. Its kernel is affected by CVE-2026-98432 and should be upgraded. See [kernel security upgrades](docs/KERNEL-UPGRADE.md) for preparing the new KVM module before rebooting, retaining an existing custom QEMU build, and checking DKMS and Secure Boot.
+
+QEMU builds include [USB passthrough lifetime fixes](docs/USB-LIFETIME.md) for failed transfer submission and device removal, plus the xHCI isochronous scheduling fix. Both recipes produce `11.1.1-2+vmp3` and check the patched USB error paths before compilation.
 
 For guests configured as Proxmox OS type `other`, a separate [host USB hotplug helper](docs/USB-HOTPLUG.md) can apply USB changes from the normal Hardware panel without a VM restart. It uses an existing xHCI controller and does not modify the QEMU/KVM masking build or Proxmox packages. It has been tested on Proxmox 9.2 with a running macOS guest; other guests need their own runtime verification.
 
 **The masking build and installer are experimental.** Automated tests cover planning, artifact integrity and simulated rollback. End-to-end installation, recovery and host reboot behavior are not yet verified on a disposable Proxmox host. Evaluate that installer on a test host before using it with valuable guests. The independent USB hotplug helper has its own [support limits and validation](docs/USB-HOTPLUG.md).
+
+A manual kernel-only migration to `7.0.14-26-pve` has been verified through a reboot on one Intel host, with its existing QEMU binary, custom KVM behavior, signed DKMS modules and Secure Boot preserved. That result does not qualify the automated installer, general hardware compatibility or application acceptance. The build command prepares artifacts. It does not perform the kernel upgrade or reboot.
 
 ## Build and installation workflow
 
@@ -98,6 +102,7 @@ Rollback also defaults to dry-run. Add `--execute` to perform it. Read [transact
 
 - [Architecture and recipe boundaries](docs/ARCHITECTURE.md)
 - [Build prerequisites and source provenance](docs/BUILDING.md)
+- [Kernel security upgrades](docs/KERNEL-UPGRADE.md)
 - [Transactions and rollback](docs/TRANSACTIONS.md)
 - [USB passthrough lifetime fix](docs/USB-LIFETIME.md)
 - [USB hotplug for `other` OS guests](docs/USB-HOTPLUG.md)
