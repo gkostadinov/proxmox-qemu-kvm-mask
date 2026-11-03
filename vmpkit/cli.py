@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from .build import build
+from .build import build, build_host
 from .common import Error, read_json, write_json
 from .detect import inventory, redact
 from .plan import identity_from_host, make_plan, select_recipe, verify_plan
@@ -44,6 +44,7 @@ def parser() -> argparse.ArgumentParser:
     builder.add_argument('--work', type=Path, default=Path('work'))
     builder.add_argument('--jobs', type=int, default=8)
     builder.add_argument('--components', nargs='+', choices=['qemu', 'kernel', 'firmware'], default=['qemu', 'kernel', 'firmware'])
+    builder.add_argument('--target-kernel', help='build only KVM for an installed target kernel before reboot; requires --components kernel')
     builder.add_argument('--source-cache', type=Path, help='optional local pinned source mirrors; not required')
     builder.add_argument('--signing-key', type=Path)
     builder.add_argument('--certificate', type=Path)
@@ -88,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
             output(make_plan(host_for(args), args.vmid,
                              read_json(args.identity) if args.identity else None), args.output)
         elif args.command == 'build':
-            host = host_for(args)
+            running_host = host_for(args)
+            host = build_host(running_host, args.components, args.target_kernel)
             recipe = select_recipe(host)
             identity = read_json(args.identity) if args.identity else identity_from_host(host)
             if not args.execute:
@@ -96,12 +98,14 @@ def main(argv: list[str] | None = None) -> int:
                         'sources': {k: {'url': recipe[k]['url'], 'commit': recipe[k]['commit'],
                                         'upstream_commit': recipe[k]['upstream_commit']} for k in args.components},
                         'work_directory': str(args.work), 'components': args.components,
+                        'running_kernel': running_host['kernel'], 'target_kernel': host['kernel'],
                         'system_packages_installed': False,
                         'signed_build_requested': bool(args.signing_key and args.certificate),
                         'next': 'Inspect the recipe and build dependencies; add --execute to build.'})
             else:
-                value = build(host, args.work, identity, args.jobs, args.components,
-                              args.source_cache, args.signing_key, args.certificate)
+                value = build(running_host, args.work, identity, args.jobs, args.components,
+                              args.source_cache, args.signing_key, args.certificate,
+                              target_kernel=args.target_kernel)
                 output({'built': list(value['artifacts']), 'manifest': str(args.work / 'artifacts/manifest.json')})
         elif args.command == 'verify':
             host = host_for(args)

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "architecture": "amd64",
-  "kernel": "7.0.14-22-pve",
+  "kernel": "7.0.14-26-pve",
   "cpu_vendor": "GenuineIntel",
   "cpu_model": "Intel(R) Example CPU",
   "vmx": true,
@@ -24,7 +24,7 @@
   "headers_present": true,
   "package_held": false,
   "kvm_parameter_present": false,
-  "kvm_path": "/lib/modules/7.0.14-22-pve/kernel/arch/x86/kvm/kvm.ko",
+  "kvm_path": "/lib/modules/7.0.14-26-pve/kernel/arch/x86/kvm/kvm.ko",
   "running_containers": [],
   "guests": {
     "200": {
